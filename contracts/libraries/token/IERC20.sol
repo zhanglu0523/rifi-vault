@@ -1,10 +1,11 @@
-pragma solidity ^0.5.0;
+// SPDX-License-Identifier: MIT
+
+pragma solidity ^0.7.0;
 
 /**
- * @dev Interface of the BEP20 standard as defined in the EIP. Does not include
- * the optional functions; to access them see {BEP20Detailed}.
+ * @dev Interface of the ERC20 standard as defined in the EIP.
  */
-interface IBEP20 {
+interface IERC20 {
     /**
      * @dev Returns the amount of tokens in existence.
      */
@@ -73,4 +74,24 @@ interface IBEP20 {
      * a call to {approve}. `value` is the new allowance.
      */
     event Approval(address indexed owner, address indexed spender, uint256 value);
+}
+
+/**
+ * @dev Interface for the optional metadata functions from the ERC20 standard.
+ */
+interface IERC20Ext is IERC20 {
+    /**
+     * @dev Returns the name of the token.
+     */
+    function name() external view returns (string memory);
+
+    /**
+     * @dev Returns the symbol of the token.
+     */
+    function symbol() external view returns (string memory);
+
+    /**
+     * @dev Returns the decimals places of the token.
+     */
+    function decimals() external view returns (uint8);
 }

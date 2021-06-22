@@ -1,62 +1,76 @@
-pragma solidity ^0.5.16;
-import "./SafeMath.sol";
-import "./IBEP20.sol";
+// SPDX-License-Identifier: MIT
+
+pragma solidity 0.7.6;
+
+
+import "./libraries/token/IERC20.sol";
+import "./IRewardLocker.sol";
+
 
 contract VaultAdminStorage {
     /**
-    * @notice Administrator for this contract
+    * @dev Administrator for this contract
     */
-    address public admin;
+    address internal admin;
 
     /**
-    * @notice Pending administrator for this contract
+    * @dev Pending administrator for this contract
     */
-    address public pendingAdmin;
+    address internal pendingAdmin;
 
     /**
-    * @notice Active brains of Rifi Vault
+    * @dev Active brains of Rifi Vault
     */
-    address public vaultImplementation;
+    address internal vaultImplementation;
 
     /**
-    * @notice Pending brains of Rifi Vault
+    * @dev Pending brains of Rifi Vault
     */
-    address public pendingVaultImplementation;
+    address internal pendingVaultImplementation;
 }
 
 contract VaultStorage is VaultAdminStorage {
+
     /// @notice Main Vault Token
-    IBEP20 public depositToken;
-
+    IERC20 public depositToken;
     /// @notice Reward Token
-    IBEP20 public rewardToken;
+    IERC20 public rewardToken;
 
-    /// @notice Guard variable for re-entrancy checks
-    bool internal _notEntered;
+    /// @notice Reward locker
+    IRewardLocker public rewardLocker;
 
-    /// @notice Total amount deposited
+
+    /***   Deposit state   ***/
+
+    /// @notice Deposit state of an account
+    struct AccountDeposit {
+        uint256 share;
+        uint256 lastDepositTime;
+    }
+    /// @notice User deposit records
+    mapping(address => AccountDeposit) public userDeposit;
+
+    /// @notice Total share issued
+    uint256 public totalShare;
+    /// @notice Amount of deposit the vault think it's holding
     uint256 public totalDeposit;
+    /// @notice Number of current depositors
+    uint256 public totalUsers;
 
-    /// @notice Accumulated reward per share
-    uint256 public rewardIndex;
 
-    /// @notice Last block at which reward was accumulated
-    uint256 public lastRewardBlock;
+    /***   Reward state   ***/
 
     /// @notice Reward rate by block
     uint256 public rewardPerBlock;
+    /// @notice Accumulated reward per share
+    uint256 public rewardIndex;
+    /// @notice Last block at which reward was accumulated
+    uint256 public lastRewardBlock;
 
-    /// @notice Minimum time a deposit must be locked in the vault
-    uint64 public withdrawalLockTime;
-
-    /// @notice Info of each user.
-    struct UserInfo {
-        uint256 amount;
-        uint256 unclaimedReward;
+    /// @notice Reward state of an account
+    struct AccountReward {
         uint256 rewardIndex;
-        uint256 depositTime;
     }
-
-    // Info of each user that stakes tokens.
-    mapping(address => UserInfo) public userInfo;
+    /// @notice User reward records
+    mapping(address => AccountReward) public userReward;
 }
