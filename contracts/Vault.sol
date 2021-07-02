@@ -73,7 +73,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      * @notice Deposit token to vault
      * @param amount The amount to deposit to vault
      */
-    function deposit(uint256 amount) public whenNotPaused nonReentrant {
+    function deposit(uint256 amount) external whenNotPaused nonReentrant {
         depositInternal(_msgSender(), amount);
     }
 
@@ -81,7 +81,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      * @notice Withdraw token from vault
      * @param amount The amount to withdraw from vault
      */
-    function withdraw(uint256 amount) public whenNotPaused nonReentrant {
+    function withdraw(uint256 amount) external whenNotPaused nonReentrant {
         // in case rounding error cause slight difference when converting back to share
         if (getBalance(_msgSender()) == amount) {
             withdrawAllInternal(_msgSender());
@@ -93,14 +93,14 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
     /**
      * @notice Withdraw everything and harvest remaining reward
      */
-    function withdrawAll() public whenNotPaused nonReentrant {
+    function withdrawAll() external whenNotPaused nonReentrant {
         withdrawAllInternal(_msgSender());
     }
 
     /**
      * @notice Harvest pending reward and start vesting
      */
-    function harvest() public whenNotPaused nonReentrant {
+    function harvest() external whenNotPaused nonReentrant {
         harvestInternal(_msgSender());
     }
 
@@ -108,7 +108,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      * @notice Endow an amount of reward tokens to the vault, split equally among all current deposit shares
      * @param amount An optional extra amount of reward from caller account
      */
-    function endowReward(uint256 amount) public nonReentrant {
+    function endowReward(uint256 amount) external nonReentrant {
         // Can not distribute reward on empty vault
         require(totalDeposit > 0, "Endow: no deposit");
 
@@ -148,10 +148,8 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      * @param amount The amount to deposit to vault
      */
     function depositInternal(address account, uint256 amount) internal {
-        // Must update vault reward before total changes
-        updateVaultRewardInternal();
-        // Must update account reward before changing deposit
-        accumulateReward(account);
+        // Must update vault & account reward before changing deposit
+        harvestInternal(account);
 
         // Transfer in the amount from user
         uint256 received = _checkedTransferFrom(depositToken, account, amount);
@@ -179,10 +177,8 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
         AccountDeposit storage user = userDeposit[account];
         require(user.share >= share, "Withdraw: exceed user balance");
 
-        // Must update vault reward before total changes
-        updateVaultRewardInternal();
-        // Must update account reward before changing deposit
-        accumulateReward(account);
+        // Must update vault & account reward before changing deposit
+        harvestInternal(account);
 
         // Update state
         uint256 amount = _shareToAmount(share);
@@ -257,24 +253,6 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
 
 
     /***   Internal helpers   ***/
-
-    /**
-     * @dev Safe transfer function, just in case if rounding error causes vault to not have enough reward tokens
-     * @param to_ The address to be transferred
-     * @param amount_ The amount to be transferred
-     * @return actual amount of reward transferred
-     */
-    function _safeRewardTransfer(address to_, uint256 amount_) internal returns (uint256) {
-        uint256 curBalance = rewardToken.balanceOf(address(this));
-
-        if (amount_ > curBalance) {
-            rewardToken.safeTransfer(to_, curBalance);
-            return curBalance;
-        } else {
-            rewardToken.safeTransfer(to_, amount_);
-            return amount_;
-        }
-    }
 
     /**
      * @dev Transfer token with balance checking before and after to account for tokens with transfer fee
@@ -366,9 +344,10 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
 
     /**
      * @notice Set reward given to whole vault per block
-     * @param newRate new reward rate
+     * @param newRate New reward rate
      */
     function setRewardPerBlock(uint256 newRate) public onlyAdmin {
+        require(newRate < type(uint96).max, "SetRewardPerBlock: value too large");
         updateVaultRewardInternal();
         uint256 oldRate = rewardPerBlock;
         rewardPerBlock = newRate;
@@ -377,7 +356,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
 
     /**
      * @notice Set new reward locker
-     * @param newRewardLocker_ new reward locker
+     * @param newRewardLocker_ New reward locker
      */
     function setRewardLocker(address newRewardLocker_) public onlyAdmin {
         address oldRewardLocker = address(rewardLocker);
