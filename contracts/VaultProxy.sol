@@ -251,7 +251,7 @@ abstract contract VaultImplementation {
     /**
      * @dev Become the new brain of proxy
      */
-    function _become(VaultProxy proxy) public {
+    function _become(VaultProxy proxy) public virtual {
         require(msg.sender == proxy.getAdmin(), "_become: only proxy admin can change brains");
         require(proxy._acceptImplementation() == 0, "_become: change not authorized");
     }

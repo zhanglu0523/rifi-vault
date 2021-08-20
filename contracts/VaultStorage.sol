@@ -42,6 +42,11 @@ contract VaultStorage is VaultAdminStorage {
 
     /***   Deposit state   ***/
 
+    /// @dev Amount of deposit the vault thinks it's holding
+    uint256 public totalDeposit;
+    /// @dev Total share issued
+    uint256 public totalShare;
+
     /// @notice Deposit state of an account
     struct AccountDeposit {
         uint256 share;
@@ -50,22 +55,16 @@ contract VaultStorage is VaultAdminStorage {
     /// @notice User deposit records
     mapping(address => AccountDeposit) public userDeposit;
 
-    /// @notice Total share issued
-    uint256 public totalShare;
-    /// @notice Amount of deposit the vault think it's holding
-    uint256 public totalDeposit;
-    /// @notice Number of current depositors
-    uint256 public totalUsers;
 
 
     /***   Reward state   ***/
 
-    /// @notice Reward rate by block
+    /// @dev Reward rate by block
     uint256 public rewardPerBlock;
-    /// @notice Accumulated reward per share
+    /// @dev Accumulated reward per share
     uint256 public rewardIndex;
-    /// @notice Last block at which reward was accumulated
-    uint256 public lastRewardBlock;
+    /// @dev Last block at which reward was distributed
+    uint256 internal lastRewardBlock;
 
     /// @notice Reward state of an account
     struct AccountReward {
