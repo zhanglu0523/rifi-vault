@@ -25,7 +25,7 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
     mapping(uint256 => VestingSchedule) data;
   }
 
-  uint256 private constant MAX_REWARD_CONTRACTS_SIZE = 10;
+  uint256 private constant MAX_REWARD_CONTRACTS_SIZE = 100;
 
   /// @dev whitelist of reward contracts
   mapping(IERC20 => EnumerableSet.AddressSet) internal rewardContractsPerToken;
@@ -39,17 +39,11 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
   /// @dev An account's total vested reward per token
   mapping(address => mapping(IERC20 => uint256)) public accountVestedBalance;
 
-  /// @dev Total amount escrowed since creation for each token
-  mapping(IERC20 => uint256) public lifetimeLockedTotal;
-
-  /// @dev Total amount vested since creation for each token
-  mapping(IERC20 => uint256) public lifetimeVestedTotal;
-
   /// @dev vesting duration for each token
   mapping(IERC20 => uint256) public vestingDurationPerToken;
 
   /* ========== EVENTS ========== */
-  event RewardContractAdded(address indexed rewardContract, bool isAdded);
+  event RewardContractAdded(address indexed rewardContract, IERC20 indexed token, bool isAdded);
   event SetVestingDuration(IERC20 indexed token, uint64 vestingDuration);
 
   /* ========== MODIFIERS ========== */
@@ -71,7 +65,7 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
     );
     require(rewardContractsPerToken[token].add(_rewardContract), '_rewardContract is added');
 
-    emit RewardContractAdded(_rewardContract, true);
+    emit RewardContractAdded(_rewardContract, token, true);
   }
 
   /**
@@ -80,7 +74,7 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
   function removeRewardsContract(IERC20 token, address _rewardContract) external onlyAdmin {
     require(rewardContractsPerToken[token].remove(_rewardContract), '_rewardContract is removed');
 
-    emit RewardContractAdded(_rewardContract, false);
+    emit RewardContractAdded(_rewardContract, token, false);
   }
 
   function setVestingDuration(IERC20 token, uint64 _vestingDuration) external onlyAdmin {
@@ -122,7 +116,6 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
       if (lastSchedule.startBlock == startBlock && lastSchedule.endBlock == endBlock) {
         lastSchedule.quantity = uint256(lastSchedule.quantity).add(quantity).toUint128();
         accountEscrowedBalance[account][token] = accountEscrowedBalance[account][token].add(quantity);
-        lifetimeLockedTotal[token] = lifetimeLockedTotal[token].add(quantity);
         emit VestingEntryQueued(schedulesLength - 1, token, account, quantity);
         return;
       }
@@ -138,62 +131,14 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
     schedules.length = schedulesLength + 1;
     // record total vesting balance of user
     accountEscrowedBalance[account][token] = accountEscrowedBalance[account][token].add(quantity);
-    lifetimeLockedTotal[token] = lifetimeLockedTotal[token].add(quantity);
 
     emit VestingEntryCreated(token, account, startBlock, endBlock, quantity, schedulesLength);
   }
 
   /**
-   * @dev vest all completed schedules for multiple tokens
-   */
-  function vestCompletedSchedulesForMultipleTokens(IERC20[] calldata tokens)
-    external override
-    returns (uint256[] memory vestedAmounts)
-  {
-    vestedAmounts = new uint256[](tokens.length);
-    for(uint256 i = 0; i < tokens.length; i++) {
-      vestedAmounts[i] = vestCompletedSchedules(tokens[i]);
-    }
-  }
-
-  /**
-   * @dev claim multiple tokens for specific vesting schedule,
-   *      if schedule has not ended yet, claiming amounts are linear with vesting blocks
-   */
-  function vestScheduleForMultipleTokensAtIndices(
-    IERC20[] calldata tokens,
-    uint256[] calldata indices
-  )
-    external override
-    returns (uint256[] memory vestedAmounts)
-  {
-    vestedAmounts = new uint256[](tokens.length);
-    for(uint256 i = 0; i < tokens.length; i++) {
-      vestedAmounts[i] = vestScheduleAtIndices(tokens[i], indices);
-    }
-  }
-
-  /**
-   * @dev claim multiple tokens for range of schedules
-   *      if schedule has not ended yet, claiming amounts are linear with vesting blocks
-   */
-  function vestScheduleForMultipleTokensInRange(
-    IERC20[] calldata tokens,
-    uint256 startIndex,
-    uint256 endIndex
-  )
-    external override
-    returns (uint256[] memory vestedAmounts)
-  {
-    vestedAmounts = new uint256[](tokens.length);
-    for(uint256 i = 0; i < tokens.length; i++) {
-      vestedAmounts[i] = vestSchedulesInRange(tokens[i], startIndex, endIndex);
-    }
-  }
-  /**
    * @dev Allow a user to vest all ended schedules
    */
-  function vestCompletedSchedules(IERC20 token) public override returns (uint256) {
+  function vestCompletedSchedules(IERC20 token) override public returns (uint256)  {
     VestingSchedules storage schedules = accountVestingSchedules[msg.sender][token];
     uint256 schedulesLength = schedules.length;
 
@@ -247,6 +192,9 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
     return totalVesting;
   }
 
+  /**
+   * @dev claim token for specific vesting schedule from startIndex to endIndex
+   */
   function vestSchedulesInRange(IERC20 token, uint256 startIndex, uint256 endIndex)
     public
     override
@@ -258,6 +206,66 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
       indexes[index - startIndex] = index;
     }
     return vestScheduleAtIndices(token, indexes);
+  }
+
+  /**
+   * @dev for all schedules, claim vested token
+   */
+  function vestAllSchedules(IERC20 token) external override  returns (uint256) {
+    uint256 schedulesLength = accountVestingSchedules[msg.sender][token].length;
+    uint256[] memory indexes = new uint256[](schedulesLength);
+    for (uint256 index = 0; index < schedulesLength; index++) {
+      indexes[index] = index;
+    }
+    return vestScheduleAtIndices(token, indexes);
+  }
+
+  /**
+   * @dev vest all completed schedules for multiple tokens
+   */
+  function vestCompletedSchedulesForMultipleTokens(IERC20[] calldata tokens)
+    external override
+    returns (uint256[] memory vestedAmounts)
+  {
+    vestedAmounts = new uint256[](tokens.length);
+    for(uint256 i = 0; i < tokens.length; i++) {
+      vestedAmounts[i] = vestCompletedSchedules(tokens[i]);
+    }
+  }
+
+  /**
+   * @dev claim multiple tokens for specific vesting schedule,
+   *      if schedule has not ended yet, claiming amounts are linear with vesting blocks
+   */
+  function vestScheduleForMultipleTokensAtIndices(
+    IERC20[] calldata tokens,
+    uint256[] calldata indices
+  )
+    external override
+    returns (uint256[] memory vestedAmounts)
+  {
+    vestedAmounts = new uint256[](tokens.length);
+    for(uint256 i = 0; i < tokens.length; i++) {
+      vestedAmounts[i] = vestScheduleAtIndices(tokens[i], indices);
+    }
+  }
+
+  /**
+   * @dev claim multiple tokens for range of schedules
+   *      if schedule has not ended yet, claiming amounts are linear with vesting blocks
+   */
+  function vestScheduleForMultipleTokensInRange(
+    IERC20[] calldata tokens,
+    uint256 startIndex,
+    uint256 endIndex
+  )
+    external override
+    returns (uint256[] memory vestedAmounts)
+  {
+    vestedAmounts = new uint256[](tokens.length);
+    for(uint256 i = 0; i < tokens.length; i++) {
+      vestedAmounts[i] = vestSchedulesInRange(tokens[i], startIndex, endIndex);
+    }
   }
 
   /* ========== VIEW FUNCTIONS ========== */
@@ -301,6 +309,26 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
     }
   }
 
+  /**
+   * @dev Get total vested amount in all vesting schedules for an account.
+   */
+  function getVestedAmount(address account, IERC20 token)
+    external
+    view
+    override
+    returns (uint256 vested)
+  {
+    VestingSchedules storage schedules = accountVestingSchedules[account][token];
+    uint256 schedulesLength = schedules.length;
+    uint256 totalVesting = 0;
+    for (uint256 i = 0; i < schedulesLength; i++) {
+      VestingSchedule memory schedule = schedules.data[i];
+      uint256 vestQuantity = _getVestingQuantity(schedule);
+      totalVesting = totalVesting.add(vestQuantity);
+    }
+    return totalVesting;
+  }
+
   function getRewardContractsPerToken(IERC20 token)
     external
     view
@@ -322,7 +350,6 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
     accountVestedBalance[msg.sender][token] = accountVestedBalance[msg.sender][token].add(
       totalVesting
     );
-    lifetimeVestedTotal[token] = lifetimeVestedTotal[token].add(totalVesting);
 
     if (token == IERC20(0)) {
       (bool success, ) = msg.sender.call{ value: totalVesting }('');

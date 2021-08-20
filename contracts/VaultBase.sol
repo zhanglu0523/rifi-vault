@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: MIT
 
-pragma solidity 0.7.6;
+pragma solidity ^0.7.6;
 
 
 import "./libraries/math/SafeMath.sol";
@@ -14,11 +14,14 @@ import "./VaultStorage.sol";
 import "./VaultErrorReporter.sol";
 
 
-contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initializable, ReentrancyGuard {
+contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Initializable, ReentrancyGuard {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
-    uint private constant FRACTIONAL_SCALE = 1e18;
+    /***   Constants   ***/
+
+    uint internal constant FRACTIONAL_SCALE = 1e18;
+    uint internal constant INITIAL_EXCHANGE_RATE = 1;
 
     /***   Events   ***/
 
@@ -32,7 +35,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
     event Harvest(address indexed user, uint256 amount);
 
     /// @notice Emitted on reward distribution
-    event DistributeReward(uint256 amount);
+    event DistributeReward(uint256 amount, uint256 deposit);
 
     /// @notice Emitted when block reward changed
     event NewRewardRate(uint256 oldRate, uint256 newRate);
@@ -41,22 +44,15 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
     event NewRewardLocker(address oldRewardLocker, address newRewardLocker);
 
 
-    /***   Modifiers   ***/
+    /***   Constructor   ***/
 
     constructor() Pausable() ReentrancyGuard() {
-    // constructor() {
         // when `admin` is a regular state variable
         admin = address(0);     // disable direct "admin" interaction with logic contract
     }
 
-    /**
-     * @dev Returns the current admin.
-     * Copied from VaultProxy.
-     */
-    function _getAdmin() internal view returns (address) {
-        // when `admin` is a regular state variable
-        return admin;
-    }
+
+    /***   Modifiers   ***/
 
     /**
      * @dev Modifier to limit access of administration functions
@@ -73,34 +69,37 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      * @notice Deposit token to vault
      * @param amount The amount to deposit to vault
      */
-    function deposit(uint256 amount) external whenNotPaused nonReentrant {
-        depositInternal(_msgSender(), amount);
+    function deposit(uint256 amount) public virtual whenNotPaused nonReentrant {
+        depositInternal(_msgSender(), amount, _msgSender());
+    }
+
+    /**
+     * @notice Deposit token to vault
+     * @param amount The amount to deposit to vault
+     */
+    function depositFor(address account, uint256 amount) public virtual whenNotPaused nonReentrant {
+        depositInternal(account, amount, _msgSender());
     }
 
     /**
      * @notice Withdraw token from vault
      * @param amount The amount to withdraw from vault
      */
-    function withdraw(uint256 amount) external whenNotPaused nonReentrant {
-        // in case rounding error cause slight difference when converting back to share
-        if (getBalance(_msgSender()) == amount) {
-            withdrawAllInternal(_msgSender());
-        } else {
-            withdrawInternal(_msgSender(), _amountToShare(amount));
-        }
+    function withdraw(uint256 amount) public virtual whenNotPaused nonReentrant {
+        withdrawInternal(_msgSender(), amount);
     }
 
     /**
      * @notice Withdraw everything and harvest remaining reward
      */
-    function withdrawAll() external whenNotPaused nonReentrant {
+    function withdrawAll() public virtual whenNotPaused nonReentrant {
         withdrawAllInternal(_msgSender());
     }
 
     /**
      * @notice Harvest pending reward and start vesting
      */
-    function harvest() external whenNotPaused nonReentrant {
+    function harvest() public virtual whenNotPaused nonReentrant {
         harvestInternal(_msgSender());
     }
 
@@ -108,7 +107,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      * @notice Endow an amount of reward tokens to the vault, split equally among all current deposit shares
      * @param amount An optional extra amount of reward from caller account
      */
-    function endowReward(uint256 amount) external nonReentrant {
+    function endowReward(uint256 amount) public nonReentrant {
         // Can not distribute reward on empty vault
         require(totalDeposit > 0, "Endow: no deposit");
 
@@ -117,13 +116,13 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
         rewardIndex = _newRewardIndex(actualEndowment);
         if (actualEndowment > 0) {
             rewardToken.safeTransfer(address(rewardLocker), actualEndowment);
-            emit DistributeReward(actualEndowment);
+            emit DistributeReward(actualEndowment, totalDeposit);
         }
     }
 
     /**
      * @notice View function to see balance of an account
-     * @param account The user to see unclaimed reward
+     * @param account The user to see balance
      */
     function getBalance(address account) public view returns (uint256) {
         return _shareToAmount(userDeposit[account].share);
@@ -135,7 +134,8 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      */
     function getUnclaimedReward(address account) public view returns (uint256) {
         uint256 currentRewardIndex = _newRewardIndex(_pendingBlockReward());
-        return currentRewardIndex.sub(userReward[account].rewardIndex).mul(userDeposit[account].share).div(FRACTIONAL_SCALE);
+        return currentRewardIndex.sub(userReward[account].rewardIndex)
+                .mul(userDeposit[account].share).div(FRACTIONAL_SCALE);
     }
 
 
@@ -146,20 +146,18 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      * @dev Must be protected from reentrancy by caller
      * @param account The account to deposit to vault
      * @param amount The amount to deposit to vault
+     * @param spender The account to transfer token from (can be different to "account")
      */
-    function depositInternal(address account, uint256 amount) internal {
+    function depositInternal(address account, uint256 amount, address spender) internal virtual {
         // Must update vault & account reward before changing deposit
         harvestInternal(account);
 
         // Transfer in the amount from user
-        uint256 received = _checkedTransferFrom(depositToken, account, amount);
+        uint256 received = _checkedTransferFrom(depositToken, spender, amount);
         uint256 newShare = _amountToShare(received);
 
         // Update state
         AccountDeposit storage user = userDeposit[account];
-        if (user.share == 0 && newShare > 0) {
-            totalUsers = totalUsers.add(1);
-        }
         user.lastDepositTime = block.timestamp;
         user.share = user.share.add(newShare);
         totalShare = totalShare.add(newShare);
@@ -170,22 +168,19 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
 
     /**
      * @notice Low level withdraw function
+     * @dev Must be protected from reentrancy by caller
      * @param account The account to withdraw from vault
-     * @param share The number of share to withdraw from vault
+     * @param amount The amount to withdraw from vault
      */
-    function withdrawInternal(address account, uint256 share) internal {
-        AccountDeposit storage user = userDeposit[account];
-        require(user.share >= share, "Withdraw: exceed user balance");
+    function withdrawInternal(address account, uint256 amount) internal virtual {
+        require(amount <= getBalance(account), "Withdraw: exceed user balance");
 
         // Must update vault & account reward before changing deposit
         harvestInternal(account);
 
         // Update state
-        uint256 amount = _shareToAmount(share);
-        if (share == user.share && user.share > 0) {
-            totalUsers = totalUsers.sub(1);
-            user.lastDepositTime = 0;
-        }
+        AccountDeposit storage user = userDeposit[account];
+        uint256 share = _amountToShare(amount);
         user.share = user.share.sub(share);
         totalShare = totalShare.sub(share);
         totalDeposit = totalDeposit.sub(amount);
@@ -199,27 +194,27 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
     /**
      * @notice Internal function to withdraw everything
      */
-    function withdrawAllInternal(address account) internal {
-        withdrawInternal(account, userDeposit[account].share);
+    function withdrawAllInternal(address account) internal virtual {
+        withdrawInternal(account, getBalance(account));
     }
 
     /**
      * @notice Update reward for an account and send to steward
      */
-    function harvestInternal(address account) internal {
-        updateVaultRewardInternal();
+    function harvestInternal(address account) internal virtual {
+        updateVaultReward();
         accumulateReward(account);
     }
 
     /**
      * @dev Update reward state for vault to current block
      */
-    function updateVaultRewardInternal() internal {
+    function updateVaultReward() internal {
         uint256 blockReward = _pendingBlockReward();
         lastRewardBlock = block.number;
         rewardIndex =  _newRewardIndex(blockReward);
         if (blockReward > 0) {
-            emit DistributeReward(blockReward);
+            emit DistributeReward(blockReward, totalDeposit);
         }
     }
 
@@ -255,11 +250,20 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
     /***   Internal helpers   ***/
 
     /**
+     * @dev Returns the current admin.
+     *      Copied from VaultProxy.
+     */
+    function _getAdmin() internal view returns (address) {
+        // when `admin` is a regular state variable
+        return admin;
+    }
+
+    /**
      * @dev Transfer token with balance checking before and after to account for tokens with transfer fee
      * @param token The token to transfer
      * @param from_ The address to be transferred
      * @param amount_ The amount to be transferred
-     * @return actual amount this contract received
+     * @return Actual amount this contract received
      */
     function _checkedTransferFrom(IERC20 token, address from_, uint256 amount_) internal returns (uint256) {
         uint256 balanceBefore = token.balanceOf(address(this));
@@ -272,7 +276,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      */
     function _amountToShare(uint256 amount) internal view returns (uint256) {
         // return totalDeposit == 0 ? amount : amount.mul(FRACTIONAL_SCALE).div(totalDeposit).mul(totalShare).div(FRACTIONAL_SCALE);
-        return totalDeposit == 0 ? amount : totalShare.mul(amount).div(totalDeposit);
+        return totalDeposit == 0 ? amount.mul(INITIAL_EXCHANGE_RATE) : totalShare.mul(amount).div(totalDeposit);
     }
 
     /**
@@ -280,7 +284,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      */
     function _shareToAmount(uint256 share) internal view returns (uint256) {
         // return totalShare == 0 ? share : share.mul(FRACTIONAL_SCALE).div(totalShare).mul(totalDeposit).div(FRACTIONAL_SCALE);
-        return totalShare == 0 ? share : totalDeposit.mul(share).div(totalShare);
+        return totalShare == 0 ? 0 : totalDeposit.mul(share).div(totalShare);
     }
 
     /**
@@ -324,7 +328,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
     /***   Administrative Functions   ***/
 
     /**
-     * @dev Initialize vault assigned token pair
+     * @dev Initialize vault parameters
      * @param _depositToken token that user would deposit into vault
      * @param _rewardToken token that user would receive as reward for deposit
      * @param _rewardLocker assistant contract to dispense reward
@@ -335,7 +339,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
         address _rewardToken,
         address _rewardLocker,
         uint256 _blockReward
-    ) public initializer onlyAdmin {
+    ) public virtual initializer onlyAdmin {
         depositToken = IERC20(_depositToken);
         rewardToken = IERC20(_rewardToken);
         setRewardLocker(_rewardLocker);
@@ -348,7 +352,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      */
     function setRewardPerBlock(uint256 newRate) public onlyAdmin {
         require(newRate < type(uint96).max, "SetRewardPerBlock: value too large");
-        updateVaultRewardInternal();
+        updateVaultReward();
         uint256 oldRate = rewardPerBlock;
         rewardPerBlock = newRate;
         emit NewRewardRate(oldRate, rewardPerBlock);
@@ -368,7 +372,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      * @notice Freeze vault interaction (deposit, withdraw, harvest). For emergency use.
      * @dev Also emit Pause(sender) event
      */
-    function freezeVault() external onlyAdmin {
+    function freezeVault() public onlyAdmin {
         _pause();
     }
 
@@ -376,7 +380,7 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      * @notice Resume normal operation
      * @dev Also emit Unpause(sender) event
      */
-    function unfreezeVault() external onlyAdmin {
+    function unfreezeVault() public onlyAdmin {
         _unpause();
     }
 
@@ -384,11 +388,8 @@ contract Vault is VaultStorage, VaultImplementation, Context, Pausable, Initiali
      * @notice A public function to sweep accidental ERC-20 transfers to this contract. Tokens are sent to admin.
      * @param token The address of the ERC-20 token to sweep
      */
-    function _sweepToken(IERC20 token) external nonReentrant {
+    function sweepToken(IERC20 token) public onlyAdmin nonReentrant {
     	require(token != depositToken, "SweepToken: can not sweep deposit token");
-        // Unauthorized sweeping of reward token may disrupt reward distribution
-        require((token != rewardToken) || (_msgSender() == admin), "SweepToken: only admin can sweep reward token");
-
         token.safeTransfer(admin, token.balanceOf(address(this)));
     }
 }

@@ -86,7 +86,7 @@ interface IRewardLocker {
     returns (uint256[] memory vestedAmounts);
 
   /**
-   * @dev for all completed schedule, claim token
+   * @dev for all completed schedules, claim token
    */
   function vestCompletedSchedules(IERC20 token) external returns (uint256);
 
@@ -106,6 +106,11 @@ interface IRewardLocker {
     uint256 startIndex,
     uint256 endIndex
   ) external returns (uint256);
+
+  /**
+   * @dev for all schedules, claim vested token
+   */
+  function vestAllSchedules(IERC20 token) external returns (uint256);
 
   /**
    * @dev length of vesting schedules array
@@ -128,4 +133,13 @@ interface IRewardLocker {
     external
     view
     returns (VestingSchedule[] memory schedules);
+
+  /**
+   * @dev Get total vested amount in all vesting schedules for an account.
+   */
+  function getVestedAmount(address account, IERC20 token)
+    external
+    view
+    returns (uint256 vested);
+
 }
