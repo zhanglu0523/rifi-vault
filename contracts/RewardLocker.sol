@@ -63,7 +63,7 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
       rewardContractsPerToken[token].length() < MAX_REWARD_CONTRACTS_SIZE,
       'rewardContracts is too long'
     );
-    require(rewardContractsPerToken[token].add(_rewardContract), '_rewardContract is added');
+    require(rewardContractsPerToken[token].add(_rewardContract), '_rewardContract already added');
 
     emit RewardContractAdded(_rewardContract, token, true);
   }
@@ -97,7 +97,7 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
     uint256 quantity,
     uint256 startBlock
   ) public payable override onlyRewardsContract(token) {
-    require(quantity > 0, 'Quantity cannot be zero');
+    require(quantity > 0, 'lockWithStartBlock: 0 lock quantity');
 
     // if (token == IERC20(0)) {
     //   require(msg.value == quantity, 'Invalid locked quantity');
@@ -174,7 +174,7 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
     uint256 schedulesLength = schedules.length;
     uint256 totalVesting = 0;
     for (uint256 i = 0; i < indexes.length; i++) {
-      require(indexes[i] < schedulesLength, 'invalid schedule index');
+      require(indexes[i] < schedulesLength, 'vestScheduleAtIndices: invalid schedule index');
       VestingSchedule memory schedule = schedules.data[indexes[i]];
       uint256 vestQuantity = _getVestingQuantity(schedule);
       if (vestQuantity == 0) {
@@ -200,7 +200,7 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
     override
     returns (uint256)
   {
-    require(startIndex <= endIndex, 'startIndex > endIndex');
+    require(startIndex <= endIndex, 'vestSchedulesInRange: startIndex > endIndex');
     uint256[] memory indexes = new uint256[](endIndex - startIndex + 1);
     for (uint256 index = startIndex; index <= endIndex; index++) {
       indexes[index - startIndex] = index;
@@ -343,7 +343,7 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
   /* ========== INTERNAL FUNCTIONS ========== */
 
   function _completeVesting(IERC20 token, uint256 totalVesting) internal {
-    require(totalVesting != 0, '0 vesting amount');
+    require(totalVesting != 0, '_completeVesting: 0 vesting amount');
     accountEscrowedBalance[msg.sender][token] = accountEscrowedBalance[msg.sender][token].sub(
       totalVesting
     );
@@ -353,7 +353,7 @@ contract RewardLocker is IRewardLocker, PermissionAdmin {
 
     if (token == IERC20(0)) {
       (bool success, ) = msg.sender.call{ value: totalVesting }('');
-      require(success, 'fail to transfer');
+      require(success, '_completeVesting: fail to transfer');
     } else {
       token.safeTransfer(msg.sender, totalVesting);
     }

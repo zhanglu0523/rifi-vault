@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity ^0.7.6;
 
 
@@ -9,19 +8,25 @@ import "./libraries/token/SafeERC20.sol";
 import "./libraries/security/ReentrancyGuard.sol";
 import "./libraries/security/Pausable.sol";
 import "./libraries/utils/Initializable.sol";
+import "./libraries/utils/Context.sol";
 import "./VaultProxy.sol";
 import "./VaultStorage.sol";
-import "./VaultErrorReporter.sol";
+import "./RewardSteward.sol";
 
 
-contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Initializable, ReentrancyGuard {
+contract VaultBase is VaultStorage, VaultImplementation, Context, ReentrancyGuard, Initializable, Pausable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
+    using RewardSteward for uint256;
 
     /***   Constants   ***/
 
-    uint internal constant FRACTIONAL_SCALE = 1e18;
-    uint internal constant INITIAL_EXCHANGE_RATE = 1;
+    uint internal constant INITIAL_EXCHANGE_RATE = 100;
+
+    /***   State variables   ***/
+
+    /// @dev reserved for future additional base contracts
+    uint[10] private __gap;
 
     /***   Events   ***/
 
@@ -43,13 +48,13 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
     /// @notice Emitted when Reward locker changed
     event NewRewardLocker(address oldRewardLocker, address newRewardLocker);
 
+    /// @notice Emitted when reward release block changed
+    event NewReleaseBlock(uint256 oldReleaseBlock, uint256 newReleaseBlock);
+
 
     /***   Constructor   ***/
 
-    constructor() Pausable() ReentrancyGuard() {
-        // when `admin` is a regular state variable
-        admin = address(0);     // disable direct "admin" interaction with logic contract
-    }
+    constructor() Pausable() ReentrancyGuard() {}
 
 
     /***   Modifiers   ***/
@@ -60,6 +65,14 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
     modifier onlyAdmin() {
         require(_msgSender() == _getAdmin(), "not admin");
         _;
+    }
+
+    /**
+     * @dev Returns the current admin.
+     *      Copied from VaultProxy.
+     */
+    function _getAdmin() internal view returns (address) {
+        return admin;
     }
 
 
@@ -133,9 +146,8 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
      * @param account The user to see unclaimed reward
      */
     function getUnclaimedReward(address account) public view returns (uint256) {
-        uint256 currentRewardIndex = _newRewardIndex(_pendingBlockReward());
-        return currentRewardIndex.sub(userReward[account].rewardIndex)
-                .mul(userDeposit[account].share).div(FRACTIONAL_SCALE);
+        uint256 currentIndex = _newRewardIndex(_pendingBlockReward());
+        return currentIndex.payoutReward(userReward[account].rewardIndex, userDeposit[account].share);
     }
 
 
@@ -169,7 +181,7 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
     /**
      * @notice Low level withdraw function
      * @dev Must be protected from reentrancy by caller
-     * @param account The account to withdraw from vault
+     * @param account The account to withdraw
      * @param amount The amount to withdraw from vault
      */
     function withdrawInternal(address account, uint256 amount) internal virtual {
@@ -193,6 +205,7 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
 
     /**
      * @notice Internal function to withdraw everything
+     * @param account The account to withdraw
      */
     function withdrawAllInternal(address account) internal virtual {
         withdrawInternal(account, getBalance(account));
@@ -225,10 +238,7 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
      */
     function accumulateReward(address account) internal {
         AccountReward storage user = userReward[account];
-        uint256 pending = rewardIndex
-            .sub(user.rewardIndex)
-            .mul(userDeposit[account].share)
-            .div(FRACTIONAL_SCALE);
+        uint256 pending = rewardIndex.payoutReward(user.rewardIndex, userDeposit[account].share);
 
         user.rewardIndex = rewardIndex;
         if (pending > 0) {
@@ -242,21 +252,16 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
      */
     function _startVesting(address account, uint256 amount) internal {
         if (amount > 0) {
-            rewardLocker.lock(rewardToken, account, amount);
+            if (lockReleaseBlock > block.number) {
+                rewardLocker.lockWithStartBlock(rewardToken, account, amount, lockReleaseBlock);
+            } else {
+                rewardLocker.lock(rewardToken, account, amount);
+            }
         }
     }
 
 
     /***   Internal helpers   ***/
-
-    /**
-     * @dev Returns the current admin.
-     *      Copied from VaultProxy.
-     */
-    function _getAdmin() internal view returns (address) {
-        // when `admin` is a regular state variable
-        return admin;
-    }
 
     /**
      * @dev Transfer token with balance checking before and after to account for tokens with transfer fee
@@ -274,16 +279,14 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
     /**
      * @dev Convert deposit amount to share considering current share value
      */
-    function _amountToShare(uint256 amount) internal view returns (uint256) {
-        // return totalDeposit == 0 ? amount : amount.mul(FRACTIONAL_SCALE).div(totalDeposit).mul(totalShare).div(FRACTIONAL_SCALE);
+    function _amountToShare(uint256 amount) internal virtual view returns (uint256) {
         return totalDeposit == 0 ? amount.mul(INITIAL_EXCHANGE_RATE) : totalShare.mul(amount).div(totalDeposit);
     }
 
     /**
      * @dev Convert share to asset amount considering current share value
      */
-    function _shareToAmount(uint256 share) internal view returns (uint256) {
-        // return totalShare == 0 ? share : share.mul(FRACTIONAL_SCALE).div(totalShare).mul(totalDeposit).div(FRACTIONAL_SCALE);
+    function _shareToAmount(uint256 share) internal virtual view returns (uint256) {
         return totalShare == 0 ? 0 : totalDeposit.mul(share).div(totalShare);
     }
 
@@ -303,26 +306,8 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
      * @param rewardAmount Amount of reward to be distributed
      */
     function _newRewardIndex(uint256 rewardAmount) internal view returns (uint256) {
-        if (rewardAmount == 0 || totalShare == 0) {
-            return rewardIndex;
-        } else {
-            return rewardAmount.mul(FRACTIONAL_SCALE).div(totalShare).add(rewardIndex);
-        }
+        return rewardIndex.updateIndex(rewardAmount, totalShare);
     }
-
-    /**
-     * @dev Heuristic to determine some insignificant amount
-     */
-    // function _isDust(IERC20 token, uint256 amount) internal view returns (bool) {
-    //     uint8 decimals = token.decimals();
-    //     if (decimals >= 11) {
-    //         return amount <= (10 ** (decimals - 8));
-    //     } else if (decimals >= 5) {
-    //         return amount <= 100;
-    //     } else {
-    //         return amount <= 1;
-    //     }
-    // }
 
 
     /***   Administrative Functions   ***/
@@ -351,6 +336,7 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
      * @param newRate New reward rate
      */
     function setRewardPerBlock(uint256 newRate) public onlyAdmin {
+        require(newRate == 0 || address(rewardToken) != address(0), "SetRewardPerBlock: no reward token");
         require(newRate < type(uint96).max, "SetRewardPerBlock: value too large");
         updateVaultReward();
         uint256 oldRate = rewardPerBlock;
@@ -365,7 +351,17 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, Pausable, Init
     function setRewardLocker(address newRewardLocker_) public onlyAdmin {
         address oldRewardLocker = address(rewardLocker);
         rewardLocker = IRewardLocker(newRewardLocker_);
-        emit NewRewardLocker(oldRewardLocker, address(rewardLocker));
+        emit NewRewardLocker(oldRewardLocker, newRewardLocker_);
+    }
+
+    /**
+     * @notice Set reward release block
+     * @param newLockReleaseBlock_ New lock release block
+     */
+    function setLockReleaseBlock(uint256 newLockReleaseBlock_) public onlyAdmin {
+        require(newLockReleaseBlock_ < type(uint32).max, "SetLockReleaseBlock: block number too big");
+        emit NewReleaseBlock(lockReleaseBlock, newLockReleaseBlock_);
+        lockReleaseBlock = newLockReleaseBlock_;
     }
 
     /**
