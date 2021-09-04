@@ -10,18 +10,7 @@ import "./VaultInvest.sol";
 import "./RewardSteward.sol";
 
 
-contract VaultAave is VaultInvest {
-    using SafeMath for uint256;
-    using RewardSteward for uint256;
-    using SafeERC20 for IERC20;
-
-    /***   Constants   ***/
-
-    ILendingPool public immutable lendingPool;
-    IAToken public immutable aToken;
-    IERC20 public immutable AAVE;
-    IAaveIncentivesController public immutable incentiveController;
-    bool public immutable giveAave;
+contract VaultAaveStorage {
 
     /***   State variables   ***/
 
@@ -34,15 +23,30 @@ contract VaultAave is VaultInvest {
     mapping(address => AccountProfit) public userProfit;
 
     /// @dev Accumulated AAVE per share
-    uint256 internal vaultAaveIndex;
+    uint256 public vaultAaveIndex;
+
+    /// @dev reserved for future use
+    uint[20] private __gap;
+
+}
+
+contract VaultAave is VaultInvest, VaultAaveStorage {
+    using SafeMath for uint256;
+    using RewardSteward for uint256;
+    using SafeERC20 for IERC20;
+
+    /***   Constants   ***/
+
+    ILendingPool public immutable lendingPool;
+    IAToken public immutable aToken;
+    IERC20 public immutable AAVE;
+    IAaveIncentivesController public immutable incentiveController;
+    bool public immutable giveAave;
 
 
     /***   Constructor   ***/
 
-    constructor(
-        address _aTokenAddr,
-        address _aaveAddr
-    ) VaultBase() {
+    constructor(address _aTokenAddr, address _aaveAddr) VaultBase() {
         aToken = IAToken(_aTokenAddr);
         lendingPool = ILendingPool(IAToken(_aTokenAddr).POOL());
         AAVE = IERC20(_aaveAddr);
@@ -144,14 +148,16 @@ contract VaultAave is VaultInvest {
      * @param account Account to harvest
      */
     function harvestEarnedTokens(address account) internal virtual override {
+        // Payout to calculate due profit
         distributeDividend(account);
+
         AccountProfit storage user = userProfit[account];
         uint256 amount = user.unclaimedAave;
         if (amount > 0) {
             if (amount <= AAVE.balanceOf(address(this))) {
                 user.unclaimedAave = 0;
-                AAVE.safeTransfer(address(rewardLocker), amount);
-                rewardLocker.lock(AAVE, account, amount);
+                AAVE.safeTransfer(account, amount);
+                emit Earn(address(AAVE), account, amount);
             }
         }
     }
@@ -191,7 +197,7 @@ contract VaultAave is VaultInvest {
     function _become(VaultProxy proxy) public override {
         super._become(proxy);
         // sanity check
-        address _depositToken = address(VaultAave(address(proxy)).depositToken());
+        address _depositToken = address(VaultBase(address(proxy)).depositToken());
         require(_depositToken == address(0) || _depositToken == aToken.UNDERLYING_ASSET_ADDRESS(), "mismatch aToken");
     }
 }

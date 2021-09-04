@@ -12,14 +12,41 @@ abstract contract VaultInvest is VaultBase {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
+    /***   Constants   ***/
+
+    uint internal constant DUST_AMOUNT = 10;
 
     /***   Events   ***/
 
+    /// @notice Emitted after updating vault balance
     event BalanceReport(uint256 oldBalance, uint256 newBalance);
+
+    /// @notice Emitted on earned tokens distribution
     event DistributeEarning(address indexed token, uint256 amount, uint256 deposit);
+
+    /// @notice Emitted when supplying to farm
     event Supply(uint256 amount);
+
+    /// @notice Emitted when redeeming from farm
     event Redeem(uint256 amount);
 
+    /// @notice Emitted when user claim earned tokens
+    event Earn(address indexed token, address indexed account, uint256 amount);
+
+
+    /***   Modifiers   ***/
+
+    /**
+     * @dev Update investment status before any action
+     */
+    modifier updateInvest(address account) {
+        // Vault balance must be up-to-date for correct share value
+        updateVaultBalance();
+        // Payout to current shareholders before changing share total
+        distributeDividend(account);
+
+        _;
+    }
 
     /***   Public functions   ***/
 
@@ -36,7 +63,7 @@ abstract contract VaultInvest is VaultBase {
      * @param account The user to see balance
      * @return Current account balance
      */
-    function getCurrentBalance(address account) public returns (uint256) {
+    function getCurrentBalance(address account) public virtual returns (uint256) {
         updateVaultBalance();
         return getBalance(account);
     }
@@ -49,7 +76,7 @@ abstract contract VaultInvest is VaultBase {
     /**
      * @notice Calculate account's balances of earn tokens
      * @param account The user to see earning
-     * @return earning : Current account earning balance
+     * @return earning : Current account earning balance for each earned token
      */
     function getEarning(address account) public virtual returns (EarningData[] memory earning);
 
@@ -63,14 +90,17 @@ abstract contract VaultInvest is VaultBase {
      * @param amount The amount to deposit to vault
      * @param spender The account to transfer token from (can be different to $account)
      */
-    function depositInternal(address account, uint256 amount, address spender) internal override {
-        // Vault balance must be up-to-date for correct share value
-        updateVaultBalance();
-        // Payout to current shareholders before issuing new shares
-        distributeDividend(account);
+    function depositInternal(address account, uint256 amount, address spender) internal virtual override updateInvest(account) {
 
         uint256 oldTotal = totalDeposit;
         super.depositInternal(account, amount, spender);
+
+        // Avoid off-by-one "error" on new deposit due to non-integer share value
+        if (getBalance(account) < amount) {
+            AccountDeposit storage user = userDeposit[account];
+            user.share = user.share.add(1);
+            totalShare = totalShare.add(1);
+        }
 
         supplyDeposit(totalDeposit.sub(oldTotal));
     }
@@ -78,20 +108,31 @@ abstract contract VaultInvest is VaultBase {
     /**
      * @notice Low level withdraw function
      * @dev Must be protected from reentrancy by caller
-     * @param account The account to withdraw from vault
+     * @param account The account to withdraw
      * @param amount The amount to withdraw from vault
      */
-    function withdrawInternal(address account, uint256 amount) internal override {
-        // Vault balance must be up-to-date to reflect correct share value
-        updateVaultBalance();
-        // Payout to current shareholders before burning shares
-        distributeDividend(account);
-
-        require(amount <= getBalance(account), "Withdraw: exceed user balance");
-
+    function withdrawInternal(address account, uint256 amount) internal virtual override updateInvest(account) {
         redeemDeposit(amount);
-
         super.withdrawInternal(account, amount);
+    }
+
+    /**
+     * @notice Internal function to withdraw everything
+     * @param account The account to withdraw
+     */
+    function withdrawAllInternal(address account) internal virtual override updateInvest(account) {
+        uint256 amount = getBalance(account);
+        redeemDeposit(amount);
+        super.withdrawInternal(account, amount);
+
+        // Remove dust shares and rounding left-over
+        if (getBalance(account) < DUST_AMOUNT) {
+            AccountDeposit storage user = userDeposit[account];
+            totalShare = totalShare.sub(user.share);
+            user.share = 0;
+        }
+
+        harvestEarnedTokens(account);
     }
 
     /**

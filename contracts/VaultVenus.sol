@@ -10,16 +10,7 @@ import "./VaultInvest.sol";
 import "./RewardSteward.sol";
 
 
-contract VaultVenus is VaultInvest {
-    using SafeMath for uint256;
-    using SafeERC20 for IERC20;
-    using RewardSteward for uint256;
-
-    /***   Constants   ***/
-
-    VBep20Interface public immutable vToken;
-    ComptrollerInterface public immutable comptroller;
-    IERC20 public immutable XVS;
+contract VaultVenusStorage {
 
     /***   State variables   ***/
 
@@ -32,7 +23,22 @@ contract VaultVenus is VaultInvest {
     mapping(address => AccountProfit) public userProfit;
 
     /// @dev Accumulated XVS per share
-    uint256 internal vaultXvsIndex;
+    uint256 public vaultXvsIndex;
+
+    /// @dev reserved for future use
+    uint[20] private __gap;
+}
+
+contract VaultVenus is VaultInvest, VaultVenusStorage {
+    using SafeMath for uint256;
+    using SafeERC20 for IERC20;
+    using RewardSteward for uint256;
+
+    /***   Constants   ***/
+
+    VBep20Interface public immutable vToken;
+    ComptrollerInterface public immutable comptroller;
+    IERC20 public immutable XVS;
 
 
     /***   Constructor   ***/
@@ -130,14 +136,16 @@ contract VaultVenus is VaultInvest {
      * @param account Account to harvest
      */
     function harvestEarnedTokens(address account) internal virtual override {
+        // Payout to calculate due profit
         distributeDividend(account);
+
         AccountProfit storage user = userProfit[account];
         uint256 amount = user.unclaimedXvs;
         if (amount > 0) {
             if (amount <= XVS.balanceOf(address(this))) {
                 user.unclaimedXvs = 0;
-                XVS.safeTransfer(address(rewardLocker), amount);
-                rewardLocker.lock(XVS, account, amount);
+                XVS.safeTransfer(account, amount);
+                emit Earn(address(XVS), account, amount);
             }
         }
     }
@@ -177,7 +185,7 @@ contract VaultVenus is VaultInvest {
     function _become(VaultProxy proxy) public override {
         super._become(proxy);
         // sanity check
-        address _depositToken = address(VaultVenus(address(proxy)).depositToken());
+        address _depositToken = address(VaultBase(address(proxy)).depositToken());
         require(_depositToken == address(0) || _depositToken == vToken.underlying(), "mismatch vToken");
     }
 }

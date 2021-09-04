@@ -10,16 +10,7 @@ import "./VaultInvest.sol";
 import "./RewardSteward.sol";
 
 
-contract VaultCompound is VaultInvest {
-    using SafeMath for uint256;
-    using SafeERC20 for IERC20;
-    using RewardSteward for uint256;
-
-    /***   Constants   ***/
-
-    CErc20Interface public immutable cToken;
-    ComptrollerInterface public immutable comptroller;
-    IERC20 public immutable COMP;
+contract VaultCompoundStorage {
 
     /***   State variables   ***/
 
@@ -32,7 +23,23 @@ contract VaultCompound is VaultInvest {
     mapping(address => AccountProfit) public userProfit;
 
     /// @dev Accumulated COMP per share
-    uint256 internal vaultCompIndex;
+    uint256 public vaultCompIndex;
+
+    /// @dev reserved for future use
+    uint[20] private __gap;
+}
+
+
+contract VaultCompound is VaultInvest, VaultCompoundStorage {
+    using SafeMath for uint256;
+    using SafeERC20 for IERC20;
+    using RewardSteward for uint256;
+
+    /***   Constants   ***/
+
+    CErc20Interface public immutable cToken;
+    ComptrollerInterface public immutable comptroller;
+    IERC20 public immutable COMP;
 
 
     /***   Constructor   ***/
@@ -130,14 +137,16 @@ contract VaultCompound is VaultInvest {
      * @param account Account to harvest
      */
     function harvestEarnedTokens(address account) internal virtual override {
+        // Payout to calculate due profit
         distributeDividend(account);
+
         AccountProfit storage user = userProfit[account];
         uint256 amount = user.unclaimedComp;
         if (amount > 0) {
             if (amount <= COMP.balanceOf(address(this))) {
                 user.unclaimedComp = 0;
-                COMP.safeTransfer(address(rewardLocker), amount);
-                rewardLocker.lock(COMP, account, amount);
+                COMP.safeTransfer(account, amount);
+                emit Earn(address(COMP), account, amount);
             }
         }
     }
@@ -177,7 +186,7 @@ contract VaultCompound is VaultInvest {
     function _become(VaultProxy proxy) public override {
         super._become(proxy);
         // sanity check
-        address _depositToken = address(VaultCompound(address(proxy)).depositToken());
+        address _depositToken = address(VaultBase(address(proxy)).depositToken());
         require(_depositToken == address(0) || _depositToken == cToken.underlying(), "mismatch cToken");
     }
 }
