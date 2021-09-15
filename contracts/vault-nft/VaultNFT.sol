@@ -988,8 +988,9 @@ contract RifiNFTVault is Ownable {
             uint256 rifiReward = multiplier.mul(rifiPerBlock);
             accRifiPerShare = accRifiPerShare.add(rifiReward.mul(FRACTIONAL_SCALE).div(depositedAmount));
         }
-        uint256 lastPendingReward = user.amount.mul(pool.accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
-        return lastPendingReward.add(user.pendingRewards);
+        uint256 lastPendingReward = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
+        lastPendingReward = lastPendingReward.add(user.pendingRewards);
+        return lastPendingReward;
     }
 
     function updatePool() internal {
