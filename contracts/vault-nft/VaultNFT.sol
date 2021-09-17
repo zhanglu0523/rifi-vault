@@ -938,28 +938,18 @@ contract RifiNFTVault is Ownable {
         uint256 pendingRewards;
     }
 
-    struct PoolInfo {
-        uint256 lastRewardBlock;
-        uint256 accRifiPerShare;
-        uint256 depositedAmount;
-        uint256 rewardsAmount;
-    }
-
     IERC20 public rifi;
 
-    PoolInfo public pool = PoolInfo({
-        lastRewardBlock: 0,
-        accRifiPerShare: 0,
-        depositedAmount: 0,
-        rewardsAmount: 0
-    });
-
+    uint256 lastRewardBlock = 0;
+    uint256 accRifiPerShare = 0;
+    uint256 public totalDeposit = 0;
+    uint256 rewardsAmount = 0;
     mapping(address => UserInfo) public userInfo;
     uint256 public startTime;
     uint256 public lockTime;
     uint256 public unlockTime;
     uint internal constant FRACTIONAL_SCALE = 1e21;
-    uint256 public rifiPerBlock = 1e17;
+    uint256 public rewardPerBlock = 75*1e15;
 
     event Deposit(address indexed user, uint256 amount);
     event Withdraw(address indexed user, uint256 amount);
@@ -971,51 +961,49 @@ contract RifiNFTVault is Ownable {
     }
 
     function startStaking(uint256 startBlock) external onlyOwner {
-        require(pool.lastRewardBlock == 0, 'Staking already started');
-        pool.lastRewardBlock = startBlock;
+        require(lastRewardBlock == 0, 'Staking already started');
+        lastRewardBlock = startBlock;
         startTime = block.timestamp;
         lockTime = startTime + 1 days;
         unlockTime = lockTime + 1 days;
     }
 
     function pendingRewards(address _user) external view returns (uint256) {
-        require(pool.lastRewardBlock > 0 && block.number >= pool.lastRewardBlock, 'Staking not yet started');
+        require(lastRewardBlock > 0 && block.number >= lastRewardBlock, 'Staking not yet started');
         UserInfo storage user = userInfo[_user];
-        uint256 accRifiPerShare = pool.accRifiPerShare;
-        uint256 depositedAmount = pool.depositedAmount;
-        if (block.number > pool.lastRewardBlock && depositedAmount != 0) {
-            uint256 multiplier = block.number.sub(pool.lastRewardBlock);
-            uint256 rifiReward = multiplier.mul(rifiPerBlock);
-            accRifiPerShare = accRifiPerShare.add(rifiReward.mul(FRACTIONAL_SCALE).div(depositedAmount));
+        uint256 tempAccRifiPerShare = accRifiPerShare;
+        if (block.number > lastRewardBlock && totalDeposit != 0) {
+            uint256 multiplier = block.number.sub(lastRewardBlock);
+            uint256 rifiReward = multiplier.mul(rewardPerBlock);
+            tempAccRifiPerShare = tempAccRifiPerShare.add(rifiReward.mul(FRACTIONAL_SCALE).div(totalDeposit));
         }
-        uint256 lastPendingReward = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
+        uint256 lastPendingReward = user.amount.mul(tempAccRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
         lastPendingReward = lastPendingReward.add(user.pendingRewards);
         return lastPendingReward;
     }
 
-    function updatePool() internal {
-        require(pool.lastRewardBlock > 0 && block.number >= pool.lastRewardBlock, 'Staking not yet started');
-        if (block.number <= pool.lastRewardBlock) {
+    function updateVault() internal {
+        require(lastRewardBlock > 0 && block.number >= lastRewardBlock, 'Staking not yet started');
+        if (block.number <= lastRewardBlock) {
             return;
         }
-        uint256 depositedAmount = pool.depositedAmount;
-        if (pool.depositedAmount == 0) {
-            pool.lastRewardBlock = block.number;
+        if (totalDeposit == 0) {
+            lastRewardBlock = block.number;
             return;
         }
-        uint256 multiplier = block.number.sub(pool.lastRewardBlock);
-        uint256 rifiReward = multiplier.mul(rifiPerBlock);
-        pool.rewardsAmount = pool.rewardsAmount.add(rifiReward);
-        pool.accRifiPerShare = pool.accRifiPerShare.add(rifiReward.mul(FRACTIONAL_SCALE).div(depositedAmount));
-        pool.lastRewardBlock = block.number;
+        uint256 multiplier = block.number.sub(lastRewardBlock);
+        uint256 rifiReward = multiplier.mul(rewardPerBlock);
+        rewardsAmount = rewardsAmount.add(rifiReward);
+        accRifiPerShare = accRifiPerShare.add(rifiReward.mul(FRACTIONAL_SCALE).div(totalDeposit));
+        lastRewardBlock = block.number;
     }
 
     function deposit(uint256 amount) external {
         require(block.timestamp <= lockTime, "Deposting time is ended!");
         UserInfo storage user = userInfo[msg.sender];
-        updatePool();
+        updateVault();
         if (user.amount > 0) {
-            uint256 lastPendingReward = user.amount.mul(pool.accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
+            uint256 lastPendingReward = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
             if (lastPendingReward > 0) {
                 user.pendingRewards = user.pendingRewards.add(lastPendingReward);
             }
@@ -1023,9 +1011,9 @@ contract RifiNFTVault is Ownable {
         if (amount > 0) {
             rifi.safeTransferFrom(address(msg.sender), address(this), amount);
             user.amount = user.amount.add(amount);
-            pool.depositedAmount = pool.depositedAmount.add(amount);
+            totalDeposit = totalDeposit.add(amount);
         }
-        user.rewardDebt = user.amount.mul(pool.accRifiPerShare).div(FRACTIONAL_SCALE);
+        user.rewardDebt = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE);
         emit Deposit(msg.sender, amount);
     }
 
@@ -1033,47 +1021,47 @@ contract RifiNFTVault is Ownable {
         require(block.timestamp <= lockTime || block.timestamp > unlockTime, "Vault is locked!");
         UserInfo storage user = userInfo[msg.sender];
         require(user.amount >= amount, "Withdrawing more than you have!");
-        updatePool();
-        uint256 lastPendingReward = user.amount.mul(pool.accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
+        updateVault();
+        uint256 lastPendingReward = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
         if (lastPendingReward > 0) {
             user.pendingRewards = user.pendingRewards.add(lastPendingReward);
         }
         if (amount > 0) {
             rifi.safeTransfer(address(msg.sender), amount);
             user.amount = user.amount.sub(amount);
-            pool.depositedAmount = pool.depositedAmount.sub(amount);
+            totalDeposit = totalDeposit.sub(amount);
         }
-        user.rewardDebt = user.amount.mul(pool.accRifiPerShare).div(FRACTIONAL_SCALE);
+        user.rewardDebt = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE);
         emit Withdraw(msg.sender, amount);
     }
 
     function claim() public {
         require(block.timestamp > lockTime, "Can only claim when deposting time is ended!");
         UserInfo storage user = userInfo[msg.sender];
-        updatePool();
-        uint256 lastPendingReward = user.amount.mul(pool.accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
+        updateVault();
+        uint256 lastPendingReward = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
         if (lastPendingReward > 0 || user.pendingRewards > 0) {
             user.pendingRewards = user.pendingRewards.add(lastPendingReward);
             uint256 claimedAmount = safeRifiTransfer(msg.sender, user.pendingRewards);
             emit Claim(msg.sender, claimedAmount);
             user.pendingRewards = user.pendingRewards.sub(claimedAmount);
-            pool.rewardsAmount = pool.rewardsAmount.sub(claimedAmount);
+            rewardsAmount = rewardsAmount.sub(claimedAmount);
         }
-        user.rewardDebt = user.amount.mul(pool.accRifiPerShare).div(FRACTIONAL_SCALE);
+        user.rewardDebt = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE);
     }
 
     function safeRifiTransfer(address to, uint256 amount) internal returns (uint256) {
-        if (amount > pool.rewardsAmount) {
-            rifi.safeTransfer(to, pool.rewardsAmount);
-            return pool.rewardsAmount;
+        if (amount > rewardsAmount) {
+            rifi.safeTransfer(to, rewardsAmount);
+            return rewardsAmount;
         } else {
             rifi.safeTransfer(to, amount);
             return amount;
         }
     }
 
-    function setRifiPerBlock(uint256 _rifiPerBlock) external onlyOwner {
-        require(_rifiPerBlock > 0, "RIFI per block should be greater than 0!");
-        rifiPerBlock = _rifiPerBlock;
+    function setRewardPerBlock(uint256 _rewardPerBlock) external onlyOwner {
+        require(_rewardPerBlock > 0, "RIFI per block should be greater than 0!");
+        rewardPerBlock = _rewardPerBlock;
     }
 }
