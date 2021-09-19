@@ -25,8 +25,11 @@ contract VaultAaveStorage {
     /// @dev Accumulated AAVE per share
     uint256 public vaultAaveIndex;
 
+    /// @dev Aave deposit referral code
+    uint16 public aaveReferralCode;
+
     /// @dev reserved for future use
-    uint[20] private __gap;
+    uint[19] private __gap;
 
 }
 
@@ -130,7 +133,7 @@ contract VaultAave is VaultInvest, VaultAaveStorage {
      * @param amount Amount to supply
      */
     function supplyDeposit(uint256 amount) internal virtual override {
-        lendingPool.deposit(address(depositToken), amount, address(this), 0);
+        lendingPool.deposit(address(depositToken), amount, address(this), aaveReferralCode);
         emit Supply(amount);
     }
 
@@ -189,6 +192,13 @@ contract VaultAave is VaultInvest, VaultAaveStorage {
         require(aToken.UNDERLYING_ASSET_ADDRESS() == _depositToken, "mismatch deposit token");
         super.initializeVault(_depositToken, _rewardToken, _rewardLocker, _blockReward);
         approveTransfer();
+    }
+
+    /**
+     * @dev Set referral code used when calling `deposit` on Aave
+     */
+    function setAaveReferralCode(uint16 newCode) public onlyAdmin {
+        aaveReferralCode = newCode;
     }
 
     /**

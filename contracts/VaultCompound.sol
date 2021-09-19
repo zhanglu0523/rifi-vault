@@ -114,20 +114,24 @@ contract VaultCompound is VaultInvest, VaultCompoundStorage {
 
     /**
      * @notice Supply available cash to Compound
+     * @dev Should revert on supplying failure
      * @param amount Amount to supply
      */
     function supplyDeposit(uint256 amount) internal virtual override {
         uint error = cToken.mint(amount);
+        // `mint` doesn't revert but returns error code on failure
         require(error == 0, "supplying failed");
         emit Supply(amount);
     }
 
     /**
      * @notice Redeem requested amount from Compound
+     * @dev Should revert on redeeming failure
      * @param amount Amount to redeem
      */
     function redeemDeposit(uint256 amount) internal virtual override {
         uint error = cToken.redeemUnderlying(amount);
+        // `redeemUnderlying` doesn't but revert returns error code on failure
         require(error == 0, "supplying failed");
         emit Redeem(amount);
     }

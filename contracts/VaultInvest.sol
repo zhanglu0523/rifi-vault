@@ -102,6 +102,7 @@ abstract contract VaultInvest is VaultBase {
             totalShare = totalShare.add(1);
         }
 
+        // Should revert on supplying failure
         supplyDeposit(totalDeposit.sub(oldTotal));
     }
 
@@ -112,6 +113,7 @@ abstract contract VaultInvest is VaultBase {
      * @param amount The amount to withdraw from vault
      */
     function withdrawInternal(address account, uint256 amount) internal virtual override updateInvest(account) {
+        // Should revert on redeeming failure
         redeemDeposit(amount);
         super.withdrawInternal(account, amount);
     }

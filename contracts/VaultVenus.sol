@@ -113,20 +113,24 @@ contract VaultVenus is VaultInvest, VaultVenusStorage {
 
     /**
      * @notice Supply available cash to Venus
+     * @dev Should revert on supplying failure
      * @param amount Amount to supply
      */
     function supplyDeposit(uint256 amount) internal virtual override {
         uint error = vToken.mint(amount);
+        // `mint` doesn't revert but returns error code on failure
         require(error == 0, "supplying failed");
         emit Supply(amount);
     }
 
     /**
      * @notice Redeem requested amount from Venus
+     * @dev Should revert on redeeming failure
      * @param amount Amount to redeem
      */
     function redeemDeposit(uint256 amount) internal virtual override {
         uint error = vToken.redeemUnderlying(amount);
+        // `redeemUnderlying` doesn't revert but returns error code on failure
         require(error == 0, "supplying failed");
         emit Redeem(amount);
     }
