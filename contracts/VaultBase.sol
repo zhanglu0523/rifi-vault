@@ -40,7 +40,7 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, ReentrancyGuar
     event Harvest(address indexed user, uint256 amount);
 
     /// @notice Emitted on reward distribution
-    event DistributeReward(uint256 amount, uint256 deposit);
+    event DistributeReward(uint256 amount, uint256 totalShare);
 
     /// @notice Emitted when block reward changed
     event NewRewardRate(uint256 oldRate, uint256 newRate);
@@ -98,14 +98,14 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, ReentrancyGuar
      * @notice Withdraw token from vault
      * @param amount The amount to withdraw from vault
      */
-    function withdraw(uint256 amount) public virtual whenNotPaused nonReentrant {
+    function withdraw(uint256 amount) public virtual nonReentrant {
         withdrawInternal(_msgSender(), amount);
     }
 
     /**
      * @notice Withdraw everything and harvest remaining reward
      */
-    function withdrawAll() public virtual whenNotPaused nonReentrant {
+    function withdrawAll() public virtual nonReentrant {
         withdrawAllInternal(_msgSender());
     }
 
@@ -129,7 +129,7 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, ReentrancyGuar
         rewardIndex = _newRewardIndex(actualEndowment);
         if (actualEndowment > 0) {
             rewardToken.safeTransfer(address(rewardLocker), actualEndowment);
-            emit DistributeReward(actualEndowment, totalDeposit);
+            emit DistributeReward(actualEndowment, totalShare);
         }
     }
 
@@ -227,7 +227,7 @@ contract VaultBase is VaultStorage, VaultImplementation, Context, ReentrancyGuar
         lastRewardBlock = block.number;
         rewardIndex =  _newRewardIndex(blockReward);
         if (blockReward > 0) {
-            emit DistributeReward(blockReward, totalDeposit);
+            emit DistributeReward(blockReward, totalShare);
         }
     }
 
