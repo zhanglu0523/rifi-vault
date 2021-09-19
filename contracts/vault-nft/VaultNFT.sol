@@ -968,7 +968,7 @@ contract RifiNFTVault is Ownable {
         unlockTime = lockTime + 1 days;
     }
 
-    function pendingRewards(address _user) external view returns (uint256) {
+    function getUnclaimedReward(address _user) external view returns (uint256) {
         require(lastRewardBlock > 0 && block.number >= lastRewardBlock, 'Staking not yet started');
         UserInfo storage user = userInfo[_user];
         uint256 tempAccRifiPerShare = accRifiPerShare;
@@ -1035,7 +1035,7 @@ contract RifiNFTVault is Ownable {
         emit Withdraw(msg.sender, amount);
     }
 
-    function claim() public {
+    function claimReward() public {
         require(block.timestamp > lockTime, "Can only claim when deposting time is ended!");
         UserInfo storage user = userInfo[msg.sender];
         updateVault();
