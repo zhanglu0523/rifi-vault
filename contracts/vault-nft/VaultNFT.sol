@@ -938,7 +938,8 @@ contract RifiNFTVault is Ownable {
         uint256 pendingRewards;
     }
 
-    IERC20 public rifi;
+    IERC20 public depositToken;
+    IERC20 public rewardToken;
 
     uint256 lastRewardBlock = 0;
     uint256 accRifiPerShare = 0;
@@ -955,17 +956,23 @@ contract RifiNFTVault is Ownable {
     event Withdraw(address indexed user, uint256 amount);
     event Claim(address indexed user, uint256 amount);
 
-    function setRifiToken(IERC20 _rifi) external onlyOwner {
-        require(address(rifi) == address(0), 'Token already set!');
-        rifi = _rifi;
+    function setRifiToken(IERC20 _depositToken) external onlyOwner {
+        require(address(depositToken) == address(0), 'Token already set!');
+        depositToken = _depositToken;
+        rewardToken = _depositToken;
     }
 
     function startStaking(uint256 startBlock) external onlyOwner {
         require(lastRewardBlock == 0, 'Staking already started');
         lastRewardBlock = startBlock;
         startTime = block.timestamp;
-        lockTime = startTime + 1 days;
-        unlockTime = lockTime + 1 days;
+        lockTime = startTime + 2 days;
+        unlockTime = lockTime + 2 days;
+    }
+
+    function getBalance(address _user) public view returns (uint256) {
+        UserInfo storage user = userInfo[_user];
+        return user.amount;
     }
 
     function getUnclaimedReward(address _user) external view returns (uint256) {
@@ -1009,7 +1016,7 @@ contract RifiNFTVault is Ownable {
             }
         }
         if (amount > 0) {
-            rifi.safeTransferFrom(address(msg.sender), address(this), amount);
+            depositToken.safeTransferFrom(address(msg.sender), address(this), amount);
             user.amount = user.amount.add(amount);
             totalDeposit = totalDeposit.add(amount);
         }
@@ -1027,12 +1034,31 @@ contract RifiNFTVault is Ownable {
             user.pendingRewards = user.pendingRewards.add(lastPendingReward);
         }
         if (amount > 0) {
-            rifi.safeTransfer(address(msg.sender), amount);
+            depositToken.safeTransfer(address(msg.sender), amount);
             user.amount = user.amount.sub(amount);
             totalDeposit = totalDeposit.sub(amount);
         }
         user.rewardDebt = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE);
         emit Withdraw(msg.sender, amount);
+    }
+
+    function withdrawAll() external {
+        require(block.timestamp > unlockTime, "Vault is locked!");
+        UserInfo storage user = userInfo[msg.sender];
+        updateVault();
+        uint256 lastPendingReward = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
+        if (lastPendingReward > 0) {
+            user.pendingRewards = user.pendingRewards.add(lastPendingReward);
+        }
+        uint256 amount = user.amount.add(user.pendingRewards);
+        uint256 userAmount = user.amount;
+        if (amount > 0) {
+            depositToken.safeTransfer(address(msg.sender), amount);
+            user.amount = 0;
+            totalDeposit = totalDeposit.sub(userAmount);
+        }
+        user.rewardDebt = 0;
+        emit Withdraw(msg.sender, userAmount);
     }
 
     function claimReward() public {
@@ -1052,10 +1078,10 @@ contract RifiNFTVault is Ownable {
 
     function safeRifiTransfer(address to, uint256 amount) internal returns (uint256) {
         if (amount > rewardsAmount) {
-            rifi.safeTransfer(to, rewardsAmount);
+            depositToken.safeTransfer(to, rewardsAmount);
             return rewardsAmount;
         } else {
-            rifi.safeTransfer(to, amount);
+            depositToken.safeTransfer(to, amount);
             return amount;
         }
     }
