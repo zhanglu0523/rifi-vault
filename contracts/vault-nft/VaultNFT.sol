@@ -1043,17 +1043,16 @@ contract RifiNFTVault is Ownable {
     }
 
     function withdrawAll() external {
-        require(block.timestamp > unlockTime, "Vault is locked!");
+        require(block.timestamp <= lockTime || block.timestamp > unlockTime, "Vault is locked!");
         UserInfo storage user = userInfo[msg.sender];
         updateVault();
         uint256 lastPendingReward = user.amount.mul(accRifiPerShare).div(FRACTIONAL_SCALE).sub(user.rewardDebt);
         if (lastPendingReward > 0) {
             user.pendingRewards = user.pendingRewards.add(lastPendingReward);
         }
-        uint256 amount = user.amount.add(user.pendingRewards);
         uint256 userAmount = user.amount;
-        if (amount > 0) {
-            depositToken.safeTransfer(address(msg.sender), amount);
+        if (userAmount > 0) {
+            depositToken.safeTransfer(address(msg.sender), userAmount);
             user.amount = 0;
             totalDeposit = totalDeposit.sub(userAmount);
         }
