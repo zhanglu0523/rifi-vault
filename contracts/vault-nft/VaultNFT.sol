@@ -358,7 +358,7 @@ contract ERC20 is Context, IERC20 {
      * All three of these values are immutable: they can only be set once during
      * construction.
      */
-    constructor (string memory name_, string memory symbol_) public {
+    constructor (string memory name_, string memory symbol_) {
         _name = name_;
         _symbol = symbol_;
         _decimals = 18;
@@ -816,7 +816,7 @@ abstract contract Ownable is Context {
     /**
      * @dev Initializes the contract setting the deployer as the initial owner.
      */
-    constructor () internal {
+    constructor () {
         address msgSender = _msgSender();
         _owner = msgSender;
         emit OwnershipTransferred(address(0), msgSender);
@@ -966,8 +966,8 @@ contract RifiNFTVault is Ownable {
         require(lastRewardBlock == 0, 'Staking already started');
         lastRewardBlock = startBlock;
         startTime = block.timestamp;
-        lockTime = startTime + 2 days;
-        unlockTime = lockTime + 2 days;
+        lockTime = startTime + 1 days;
+        unlockTime = lockTime + 1 days;
     }
 
     function getBalance(address _user) public view returns (uint256) {
