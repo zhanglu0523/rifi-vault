@@ -1,2 +1,2 @@
 # rifi-vault
-RiFi vault smart contracts
+RiFi Vault smart contracts
